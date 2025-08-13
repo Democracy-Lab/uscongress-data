@@ -508,7 +508,8 @@ if __name__ == '__main__':
     p.add_argument('--per-key-hourly-limit', type=int,
                    help="Optional per-key hourly limit to set a global throttle (e.g., 1000)")
     p.add_argument('--workers', type=int, default=8, help="Worker threads when --parallel is on")
-    p.add_argument('--parallel', action=bool_action, default=True, help="Enable/disable parallel fetch (default: enabled)")
+    p.add_argument("--parallel", action="store_true",
+               help="Run downloads in parallel (default: off)")
     args = p.parse_args()
 
     keys = [k.strip() for k in args.api_keys.split(',') if k.strip()]
