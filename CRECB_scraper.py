@@ -230,8 +230,8 @@ if __name__ == "__main__":
     p.add_argument("--api-keys", required=True, help="Comma-separated GovInfo API keys")
     p.add_argument("--workers",  type=int, default=4, help="Parallel threads")
     p.add_argument("--start-year", type=int, default=1873, help="Start year for scraping (default: 1873)")
-    p.add_argument("--parallel", action=bool_action, default=True,
-                   help="Enable/disable parallel downloads (default: enabled)")
+    p.add_argument("--parallel", action="store_true",
+               help="Run downloads in parallel (default: off)")
 
     args = p.parse_args()
 
