@@ -14,4 +14,5 @@ API_KEYS="DEMO_KEY1,DEMO_KEY2"
 python CREC_scraper.py "CREC_output_folder" \
   --years 35 \
   --workers "$WORKERS" \
-  --api-keys "$API_KEYS" 
+  --api-keys "$API_KEYS" \
+  --parallel
