@@ -53,7 +53,7 @@ jobs:
           git push
 
       - id: build_page
-        name: Build index.html at root (prefer existing; fallback to README)
+        name: Build index.html at root (prefer existing; fallback to README) with highlighted code
         env:
           REPO_HTML_TITLE: ${{ github.repository }}
         run: |
@@ -63,8 +63,8 @@ jobs:
           if [ -f index.html ]; then
             echo "Keeping existing index.html (not regenerating)."
           elif [ -f README.md ]; then
-            echo "Generating index.html from README.md..."
-            pandoc README.md -f markdown -t html -s -o index.html --metadata title="$REPO_HTML_TITLE"
+            echo "Generating index.html from README.md with syntax highlighting..."
+            pandoc README.md -f markdown -t html -s               --highlight-style=tango               -o index.html               --metadata title="$REPO_HTML_TITLE"
             GENERATED=1
           else
             echo "No index.html or README.md found; writing minimal page."
@@ -72,12 +72,14 @@ jobs:
             GENERATED=1
           fi
 
-          # Ensure Arial font is applied
+          # Inject GitHub-like CSS for code blocks + base font without sed (avoid escaping issues)
+          CSS_BLOCK='<style>body{font-family:Arial,Helvetica,sans-serif} h1,h2,h3,h4,h5,h6{font-family:Arial,Helvetica,sans-serif} pre code{display:block;padding:.75em;background:#f6f8fa;border-radius:6px;font-size:90%;overflow:auto} code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,\"Liberation Mono\",\"Courier New\",monospace}</style>'
           if grep -qi '</head>' index.html; then
-            sed -i 's|</head>|<style>body{font-family:Arial, Helvetica, sans-serif;} h1,h2,h3,h4,h5,h6{font-family:Arial, Helvetica, sans-serif;}</style></head>|' index.html
+            awk -v css="$CSS_BLOCK" 'BEGIN{IGNORECASE=1} { if (!done && match(tolower($0), /<\/head>/)) { sub(/<\/head>/, css"</head>"); done=1 } print }' index.html > index.html.tmp
+            mv index.html.tmp index.html
           else
             TMP=$(mktemp)
-            printf '%s\n' '<!doctype html><html><head><meta charset="utf-8">' '<style>body{font-family:Arial, Helvetica, sans-serif;} h1,h2,h3,h4,h5,h6{font-family:Arial, Helvetica, sans-serif;}</style>' '</head><body>' > "$TMP"
+            printf '%s\n' '<!doctype html><html><head><meta charset="utf-8">' "${CSS_BLOCK}" '</head><body>' > "$TMP"
             cat index.html >> "$TMP"
             printf '%s\n' '</body></html>' >> "$TMP"
             mv "$TMP" index.html
@@ -85,7 +87,7 @@ jobs:
 
           echo "generated=$GENERATED" >> "$GITHUB_OUTPUT"
 
-      - name: Append suggested citation (written + BibTeX) + repo metadata + License link
+      - name: Append License, Suggested Citation, BibTeX, and repo metadata
         if: steps.build_page.outputs.generated == '1'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -130,7 +132,7 @@ jobs:
           note = {Last updated: $LAST_UPDATE}
           }"
 
-          printf '%s\n' '' '<hr>' '<h2>Suggested Citation</h2>' "<p>$citation_written</p>" '' '<h3>BibTeX</h3>' '<pre><code>' "$bibtex" '</code></pre>' '' '<h3>Repository</h3>' "<p><em>$REPO_NAME</em><br>" "<a href=\"$REPO_URL\">$REPO_URL</a><br>" "<strong>Last updated:</strong> $LAST_UPDATE</p>" '' '<h3>License</h3>' '<p><a href="LICENSE">MIT License (Steph Buongiorno)</a></p>' >> index.html
+          printf '%s\n' '' '<hr>' '<h2>License</h2>' '<p>This project is licensed under the <a href="LICENSE">MIT License</a>.</p>' '' '<h2>Suggested Citation</h2>' "<p>$citation_written</p>" '' '<h3>BibTeX</h3>' '<pre><code>' "$bibtex" '</code></pre>' '' '<h3>Repository</h3>' "<p><em>$REPO_NAME</em><br>" "<a href=\"$REPO_URL\">$REPO_URL</a><br>" "<strong>Last updated:</strong> $LAST_UPDATE</p>" >> index.html
 
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3
@@ -146,4 +148,5 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
 
