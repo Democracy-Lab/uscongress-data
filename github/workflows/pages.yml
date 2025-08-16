@@ -1,0 +1,156 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pandoc jq
+
+      # Changed from docs/index.html to index.html at root
+      - id: build_page
+        name: Build index.html at root (prefer existing; fallback to README)
+        env:
+          REPO_HTML_TITLE: ${{ github.repository }}
+        run: |
+          set -e
+          GENERATED=0
+
+          if [ -f index.html ]; then
+            echo "Keeping existing index.html (not regenerating)."
+          elif [ -f README.md ]; then
+            echo "Generating index.html from README.md..."
+            pandoc README.md -f markdown -t html -s -o index.html --metadata title="$REPO_HTML_TITLE"
+            GENERATED=1
+          else
+            echo "No index.html or README.md found; writing minimal page."
+            printf '%s\n' \
+              '<!doctype html><html><head><meta charset="utf-8"><title>Site</title></head><body>' \
+              '<h1>Site</h1>' \
+              '<p>No README.md found. Add one and push to regenerate this page.</p>' \
+              '</body></html>' \
+              > index.html
+            GENERATED=1
+          fi
+
+          # Ensure Arial font is applied, even on a custom index.html
+          if grep -qi '</head>' index.html; then
+            sed -i 's|</head>|<style>body{font-family:Arial, Helvetica, sans-serif;} h1,h2,h3,h4,h5,h6{font-family:Arial, Helvetica, sans-serif;}</style></head>|' index.html
+          else
+            TMP=$(mktemp)
+            printf '%s\n' \
+              '<!doctype html><html><head><meta charset="utf-8">' \
+              '<style>body{font-family:Arial, Helvetica, sans-serif;} h1,h2,h3,h4,h5,h6{font-family:Arial, Helvetica, sans-serif;}</style>' \
+              '</head><body>' \
+              > "$TMP"
+            cat index.html >> "$TMP"
+            printf '%s\n' '</body></html>' >> "$TMP"
+            mv "$TMP" index.html
+          fi
+
+          echo "generated=$GENERATED" >> "$GITHUB_OUTPUT"
+
+      - name: Append suggested citation (written + BibTeX) + repo metadata
+        if: steps.build_page.outputs.generated == '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -e
+
+          REPO_NAME="${REPO#*/}"
+          REPO_URL="https://github.com/$REPO"
+          LAST_UPDATE=$(git log -1 --format=%cI || date -u +%Y-%m-%dT%H:%M:%SZ)
+          YEAR=$(date -u -d "$LAST_UPDATE" +%Y 2>/dev/null || date -u +%Y)
+
+          logins=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$REPO/contributors?per_page=100&anon=false" \
+            | jq -r '.[] | select((.type // "") != "Bot") | select(.login != "ghost") | .login' | sort -fu)
+
+          names=""
+          for u in $logins; do
+            name=$(curl -s -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/users/$u" | jq -r '.name // empty')
+            [ -z "$name" ] && name="$u"
+            if [ "$name" != "Steph Buongiorno" ] && [ "$u" != "stephbuon" ]; then
+              names="$names\n$name"
+            fi
+          done
+          names_sorted=$(printf "%b" "$names" | awk 'NF' | sort -fu)
+
+          citation_written="Steph Buongiorno"
+          if [ -n "$names_sorted" ]; then
+            citation_written="$citation_written; $(echo "$names_sorted" | paste -sd ', ' -)"
+          fi
+          citation_written="$citation_written. $REPO_NAME. $YEAR. Available at: $REPO_URL"
+
+          authors_bibtex="Steph Buongiorno"
+          if [ -n "$names_sorted" ]; then
+            authors_bibtex="$authors_bibtex and $(echo "$names_sorted" | paste -sd ' and ' -)"
+          fi
+
+          bibtex="@misc{$REPO_NAME-$YEAR,
+          author = {$authors_bibtex},
+          title = {$REPO_NAME},
+          year = {$YEAR},
+          howpublished = {\\url{$REPO_URL}},
+          note = {Last updated: $LAST_UPDATE}
+          }"
+
+          printf '%s\n' \
+            '' \
+            '<hr>' \
+            '<h2>Suggested Citation</h2>' \
+            "<p>$citation_written</p>" \
+            '' \
+            '<h3>BibTeX</h3>' \
+            '<pre><code>' \
+            "$bibtex" \
+            '</code></pre>' \
+            '' \
+            '<h3>Repository</h3>' \
+            "<p><em>$REPO_NAME</em><br>" \
+            "<a href=\"$REPO_URL\">$REPO_URL</a><br>" \
+            "<strong>Last updated:</strong> $LAST_UPDATE</p>" \
+            >> index.html
+
+      # Changed to upload root, not docs
+      - name: Upload site artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+
+
+
