@@ -1,5 +1,3 @@
-Note: We want everyone to have the ability to collect Congressional Records! If you have never used Python before watch this [3 minute video]() and by the end you will be collecting data on a spreadsheet. 
-
 # Congressional Data Scrapers
 
 The CREC (Daily Edition) and CRECB (Bound Edition) scrapers are designed to grab all raw Congressional Records content using the GovInfo API. The Daily Edition and Bound Edition of the Congressional Records are available in different formats, and organized in different ways.
