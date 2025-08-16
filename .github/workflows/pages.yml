@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -28,7 +28,30 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pandoc jq
 
-      # Changed from docs/index.html to index.html at root
+      - id: ensure_license
+        name: Ensure MIT License exists (and mark if created)
+        run: |
+          if [ ! -f LICENSE ]; then
+            YEAR=$(date +%Y)
+            printf '%s\n' "MIT License" "" "Copyright (c) $YEAR Steph Buongiorno" "" "Permission is hereby granted, free of charge, to any person obtaining a copy" "of this software and associated documentation files (the \"Software\"), to deal" "in the Software without restriction, including without limitation the rights" "to use, copy, modify, merge, publish, distribute, sublicense, and/or sell" "copies of the Software, and to permit persons to whom the Software is" "furnished to do so, subject to the following conditions:" "" "The above copyright notice and this permission notice shall be included in all" "copies or substantial portions of the Software." "" "THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR" "IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY," "FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE" "AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER" "LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM," "OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE" "SOFTWARE." > LICENSE
+            echo "MIT License generated."
+            echo "created=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "LICENSE file already exists — skipping generation."
+            echo "created=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit LICENSE to repo (first time only)
+        if: steps.ensure_license.outputs.created == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add LICENSE
+          git commit -m "Add MIT LICENSE (auto-generated)"
+          git push
+
       - id: build_page
         name: Build index.html at root (prefer existing; fallback to README)
         env:
@@ -45,25 +68,16 @@ jobs:
             GENERATED=1
           else
             echo "No index.html or README.md found; writing minimal page."
-            printf '%s\n' \
-              '<!doctype html><html><head><meta charset="utf-8"><title>Site</title></head><body>' \
-              '<h1>Site</h1>' \
-              '<p>No README.md found. Add one and push to regenerate this page.</p>' \
-              '</body></html>' \
-              > index.html
+            printf '%s\n' '<!doctype html><html><head><meta charset="utf-8"><title>Site</title></head><body>' '<h1>Site</h1>' '<p>No README.md found. Add one and push to regenerate this page.</p>' '</body></html>' > index.html
             GENERATED=1
           fi
 
-          # Ensure Arial font is applied, even on a custom index.html
+          # Ensure Arial font is applied
           if grep -qi '</head>' index.html; then
             sed -i 's|</head>|<style>body{font-family:Arial, Helvetica, sans-serif;} h1,h2,h3,h4,h5,h6{font-family:Arial, Helvetica, sans-serif;}</style></head>|' index.html
           else
             TMP=$(mktemp)
-            printf '%s\n' \
-              '<!doctype html><html><head><meta charset="utf-8">' \
-              '<style>body{font-family:Arial, Helvetica, sans-serif;} h1,h2,h3,h4,h5,h6{font-family:Arial, Helvetica, sans-serif;}</style>' \
-              '</head><body>' \
-              > "$TMP"
+            printf '%s\n' '<!doctype html><html><head><meta charset="utf-8">' '<style>body{font-family:Arial, Helvetica, sans-serif;} h1,h2,h3,h4,h5,h6{font-family:Arial, Helvetica, sans-serif;}</style>' '</head><body>' > "$TMP"
             cat index.html >> "$TMP"
             printf '%s\n' '</body></html>' >> "$TMP"
             mv "$TMP" index.html
@@ -71,7 +85,7 @@ jobs:
 
           echo "generated=$GENERATED" >> "$GITHUB_OUTPUT"
 
-      - name: Append suggested citation (written + BibTeX) + repo metadata
+      - name: Append suggested citation (written + BibTeX) + repo metadata + License link
         if: steps.build_page.outputs.generated == '1'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -85,9 +99,7 @@ jobs:
           LAST_UPDATE=$(git log -1 --format=%cI || date -u +%Y-%m-%dT%H:%M:%SZ)
           YEAR=$(date -u -d "$LAST_UPDATE" +%Y 2>/dev/null || date -u +%Y)
 
-          logins=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
-            "https://api.github.com/repos/$REPO/contributors?per_page=100&anon=false" \
-            | jq -r '.[] | select((.type // "") != "Bot") | select(.login != "ghost") | .login' | sort -fu)
+          logins=$(curl -s -H "Authorization: Bearer $GH_TOKEN"             "https://api.github.com/repos/$REPO/contributors?per_page=100&anon=false"             | jq -r '.[] | select((.type // "") != "Bot") | select(.login != "ghost") | .login' | sort -fu)
 
           names=""
           for u in $logins; do
@@ -118,24 +130,8 @@ jobs:
           note = {Last updated: $LAST_UPDATE}
           }"
 
-          printf '%s\n' \
-            '' \
-            '<hr>' \
-            '<h2>Suggested Citation</h2>' \
-            "<p>$citation_written</p>" \
-            '' \
-            '<h3>BibTeX</h3>' \
-            '<pre><code>' \
-            "$bibtex" \
-            '</code></pre>' \
-            '' \
-            '<h3>Repository</h3>' \
-            "<p><em>$REPO_NAME</em><br>" \
-            "<a href=\"$REPO_URL\">$REPO_URL</a><br>" \
-            "<strong>Last updated:</strong> $LAST_UPDATE</p>" \
-            >> index.html
+          printf '%s\n' '' '<hr>' '<h2>Suggested Citation</h2>' "<p>$citation_written</p>" '' '<h3>BibTeX</h3>' '<pre><code>' "$bibtex" '</code></pre>' '' '<h3>Repository</h3>' "<p><em>$REPO_NAME</em><br>" "<a href=\"$REPO_URL\">$REPO_URL</a><br>" "<strong>Last updated:</strong> $LAST_UPDATE</p>" '' '<h3>License</h3>' '<p><a href="LICENSE">MIT License (Steph Buongiorno)</a></p>' >> index.html
 
-      # Changed to upload root, not docs
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3
         with:
@@ -150,7 +146,4 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
-
-
-
 
