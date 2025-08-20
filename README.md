@@ -93,6 +93,12 @@ Scraped CREB content is stored in YYYY folders (we likely want to grab dates fro
 
 There are currently no parsed csv files, as the data must be converted to text before the speaker scraper can be run. 
 
+### Speaker Parser
+
+
+To identify speakers, we wrote a regular expression that matches with and extracts speaker names on indented lines in the transcripts, lines that begin with two or more spaces, and contain a speaker “identifier.” These identifiers include a wide range of formats: honorifics such as "Mr.", "Mrs.", "Ms.", "Dr.", "Chairman", and "Chairwoman" followed by a name (e.g., "Mr. SMITH", "Chairwoman JACKSON LEE"); multi-word names and names with initials or prefixes (e.g., "Mr. VAN HOLLEN", "Mr. A. B. SMITH"); and names that include diacritics or lowercase particles (e.g., "Mr. José Martínez", "Mr. de la Cruz"). It also matches lines that include the label "(continuing)" to indicate the continuation of a previous speaker, as in "Mr. SMITH (continuing).”  Additionally, the parser captures institutional speaker roles introduced with "The", such as "The CLERK", "The SPEAKER", "The SPEAKER pro tempore", "The PRESIDENT", "The PRESIDENT pro tempore", "The ACTING PRESIDENT pro tempore", and "The VICE PRESIDENT." These role-based identifiers may appear with or without modifiers like "pro tempore", and the pattern allows for both colons and periods at the end. 
+
+
 ## Usage
 
 Required Parameters: 
