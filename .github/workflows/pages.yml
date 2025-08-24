@@ -26,7 +26,7 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y pandoc jq
+          sudo apt-get install -y pandoc jq curl
 
       - id: ensure_license
         name: Ensure MIT License exists (and mark if created)
@@ -53,42 +53,204 @@ jobs:
           git push
 
       - id: build_page
-        name: Build index.html at root (prefer existing; fallback to README) with highlighted code
+        name: Build index.html with sidebar TOC from README headings
         env:
           REPO_HTML_TITLE: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          REPO_FULL: ${{ github.repository }}   # owner/repo
         run: |
           set -e
           GENERATED=0
 
-          if [ -f index.html ]; then
-            echo "Keeping existing index.html (not regenerating)."
-          elif [ -f README.md ]; then
-            echo "Generating index.html from README.md with syntax highlighting..."
-            pandoc README.md -f markdown -t html -s               --highlight-style=tango               -o index.html               --metadata title="$REPO_HTML_TITLE"
+          # === Compute dynamic URLs ===
+          REPO_NAME="${REPO_FULL#*/}"
+          REPO_URL="https://github.com/${REPO_FULL}"
+          if [ "$REPO_NAME" = "${OWNER}.github.io" ]; then
+            PAGES_URL="https://${OWNER}.github.io/"
+          else
+            PAGES_URL="https://${OWNER}.github.io/${REPO_NAME}/"
+          fi
+
+          # Minimal Pandoc template (no reliance on built-in TOC)
+          cat > pandoc_template.html <<'TPL'
+          <!doctype html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>$title$</title>
+          </head>
+          <body>
+          $for(include-before)$
+          $include-before$
+          $endfor$
+          $body$
+          $for(include-after)$
+          $include-after$
+          $endfor$
+          </body>
+          </html>
+          TPL
+
+          # Styles (grid layout + sidebar + nice TOC)
+          CSS='<style>
+          html, body { width:100%; max-width:none; margin:0; padding:0; font-family: Arial, Helvetica, sans-serif; color:#222; }
+          h1, h2, h3, h4, h5, h6 { font-family: Arial, Helvetica, sans-serif; }
+          pre code { display:block; padding:.75em; background:#f6f8fa; border-radius:6px; font-size:90%; overflow:auto; }
+          code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+
+          .page { display:grid; grid-template-columns: 240px 1fr; min-height:100vh;
+                  background: linear-gradient(to right, #f4f4f4 0, #f4f4f4 240px, transparent 240px); }
+          .sidebar { padding:20px; position:sticky; top:0; height:100vh; overflow:auto; }
+          .sidebar a.home { display:block; margin-bottom:14px; color:#0366d6; text-decoration:none; font-weight:700; }
+          .sidebar a.home:hover { text-decoration:underline; }
+          .sidebar nav.toc { font-size:14px; line-height:1.4; }
+          .sidebar nav.toc ul { list-style:none; padding-left:0; margin:0; }
+          .sidebar nav.toc li { margin:4px 0; }
+          .sidebar nav.toc a { color:#24292f; text-decoration:none; }
+          .sidebar nav.toc a:hover { text-decoration:underline; }
+
+          /* TOC indentation rules */
+          .sidebar nav.toc ul ul { padding-left:14px; border-left:2px solid #e5e7eb; margin-left:6px; }
+          .sidebar nav.toc ul ul ul { padding-left:14px; margin-left:6px; }
+          .sidebar nav.toc ul ul ul ul { padding-left:14px; margin-left:6px; }
+
+          .content { width:100%; }
+          .container { width:100%; max-width: 1000px; margin:0 auto; padding:48px; }
+
+          .extras { margin-top: 48px; }
+          .extras h2, .extras h3 { margin-top: 1.2em; }
+
+          @media (max-width: 1000px) {
+            .page { display:block; background:none; }
+            .sidebar { position: static; height:auto; overflow:visible; padding:16px; background:#f4f4f4; }
+            .container { max-width:100%; margin:0; padding:24px; }
+          }
+          </style>'
+
+          # Build index.html from README.md
+          if [ -f README.md ]; then
+            echo "Generating index.html from README.md..."
+            rm -f index.html
+            pandoc README.md -f gfm+yaml_metadata_block -t html -s \
+              --template=pandoc_template.html \
+              -o index.html \
+              --metadata title="$REPO_HTML_TITLE"
             GENERATED=1
           else
-            echo "No index.html or README.md found; writing minimal page."
+            echo "No README.md found; writing minimal page."
             printf '%s\n' '<!doctype html><html><head><meta charset="utf-8"><title>Site</title></head><body>' '<h1>Site</h1>' '<p>No README.md found. Add one and push to regenerate this page.</p>' '</body></html>' > index.html
             GENERATED=1
           fi
 
-          # Inject GitHub-like CSS for code blocks + base font without sed (avoid escaping issues)
-          CSS_BLOCK='<style>body{font-family:Arial,Helvetica,sans-serif} h1,h2,h3,h4,h5,h6{font-family:Arial,Helvetica,sans-serif} pre code{display:block;padding:.75em;background:#f6f8fa;border-radius:6px;font-size:90%;overflow:auto} code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,\"Liberation Mono\",\"Courier New\",monospace}</style>'
+          # Inject CSS into <head>
           if grep -qi '</head>' index.html; then
-            awk -v css="$CSS_BLOCK" 'BEGIN{IGNORECASE=1} { if (!done && match(tolower($0), /<\/head>/)) { sub(/<\/head>/, css"</head>"); done=1 } print }' index.html > index.html.tmp
+            awk -v css="$CSS" 'BEGIN{IGNORECASE=1} { if (!done && match(tolower($0), /<\/head>/)) { sub(/<\/head>/, css"</head>"); done=1 } print }' index.html > index.html.tmp
             mv index.html.tmp index.html
           else
             TMP=$(mktemp)
-            printf '%s\n' '<!doctype html><html><head><meta charset="utf-8">' "${CSS_BLOCK}" '</head><body>' > "$TMP"
-            cat index.html >> "$TMP"
+            printf '%s\n' '<!doctype html><html><head><meta charset="utf-8">' "$CSS" '</head><body>' > "$TMP"
+            sed '1,/<body[^>]*>/d' index.html >> "$TMP" || true
             printf '%s\n' '</body></html>' >> "$TMP"
             mv "$TMP" index.html
           fi
 
+          # === Sidebar wrapper with Home + placeholder for TOC links ===
+          HOMELINK="https://democracy-lab.github.io/"
+          if grep -qi '<div class="page"' index.html; then
+            echo "Wrapper already present; skipping."
+          else
+            awk -v home="$HOMELINK" 'BEGIN{IGNORECASE=1}
+              {
+                if (!done && match(tolower($0), /<body[^>]*>/)) {
+                  sub(/<body[^>]*>/,
+                      "&\n<div class=\"page\"><aside class=\"sidebar\">" \
+                      "<a class=\"home\" href=\"" home "\" aria-label=\"Go to home\">← Home</a>" \
+                      "<nav class=\"toc\"><!--SIDEBAR_LINKS--></nav>" \
+                      "</aside>\n<main class=\"content\"><div class=\"container\">");
+                  done=1
+                }
+                print
+              }' index.html > index.html.tmp && mv index.html.tmp index.html
+
+            awk 'BEGIN{IGNORECASE=1} { sub(/<\/body>/, "</div></main></div></body>"); print }' index.html > index.html.tmp && mv index.html.tmp index.html
+          fi
+
+          # === Build a TOC by parsing headings already in index.html ===
+          # We look for <h1..h6 id="...">Title</hN>, strip any inline tags, and nest <ul> by level.
+          TOC_BUILT=$(perl -0777 -ne '
+            my @H;
+            while (m|<h([1-6])\s+[^>]*id="([^"]+)"[^>]*>(.*?)</h\1>|sig) {
+              my ($lvl,$id,$raw) = ($1,$2,$3);
+              $raw =~ s/<[^>]+>//g;           # strip tags
+              $raw =~ s/\s+/ /g; $raw =~ s/^\s+|\s+$//g;
+              push @H, [$lvl,$id,$raw] if length $raw;
+            }
+            if (!@H) { exit 0 }
+            my $html = "";
+            my $prev = 0;
+            for my $r (@H) {
+              my ($l,$id,$t) = @$r;
+              if ($prev==0) { $html .= "<ul>\n"; $prev=$l; }
+              while ($l > $prev) { $html .= "<ul>\n"; $prev++ }
+              while ($l < $prev) { $html .= "</ul>\n"; $prev-- }
+              $html .= qq{<li><a href="#$id">$t</a></li>\n};
+            }
+            while ($prev-- > 1) { $html .= "</ul>\n"; }
+            $html .= "</ul>\n";
+            print $html;
+          ' index.html || true)
+
+          # Count README headings (diagnostics)
+          if [ -f README.md ]; then
+            HCOUNT=$(grep -E '^\s{0,3}#{1,6}\s' README.md | wc -l | tr -d ' ')
+          else
+            HCOUNT=0
+          fi
+
+          if [ -n "$TOC_BUILT" ]; then
+            # Inject into sidebar
+            if grep -q "<!--SIDEBAR_LINKS-->" index.html; then
+              awk -v block="$TOC_BUILT" 'BEGIN{IGNORECASE=1}
+                { sub(/<!--SIDEBAR_LINKS-->/, block); print }' index.html > index.html.tmp && mv index.html.tmp index.html
+            else
+              perl -0777 -pe 's|(<nav\s+class="toc"[^>]*>).*?(</nav>)|$1'"$TOC_BUILT"'$2|si' -i index.html
+            fi
+
+            echo "Sidebar TOC built from headings; README headings: $HCOUNT"
+            {
+              echo "### Sidebar TOC status"
+              echo ""
+              echo "- README headings detected: $HCOUNT"
+              echo "- Sidebar TOC built from headings ✅"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No headings parsed; leaving sidebar placeholder empty."
+            {
+              echo "### Sidebar TOC status"
+              echo ""
+              echo "- README headings detected: $HCOUNT"
+              echo "- Could not parse headings from built HTML ❌"
+              echo ""
+              echo "Hints:"
+              echo "1) Ensure headings are not inside code fences or raw HTML blocks"
+              echo "2) Confirm Pandoc produced <h1..h6 id=\"...\"> elements"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # Replace any placeholders, just in case
+          esc() { printf '%s' "$1" | sed 's/[&/\\]/\\&/g'; }
+          REPO_URL_ESC=$(esc "$REPO_URL")
+          PAGES_URL_ESC=$(esc "$PAGES_URL")
+          sed -i \
+            -e "s/GITHUB_REPO_URL/${REPO_URL_ESC}/g" \
+            -e "s/GITHUB_REPO/${REPO_URL_ESC}/g" \
+            -e "s/GITHUB_PAGES_URL/${PAGES_URL_ESC}/g" \
+            index.html
+
           echo "generated=$GENERATED" >> "$GITHUB_OUTPUT"
 
-      - name: Append License, Suggested Citation, BibTeX, and repo metadata
-        if: steps.build_page.outputs.generated == '1'
+      - name: Inject License/Citation/BibTeX block BELOW README content (inside container)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -98,10 +260,17 @@ jobs:
 
           REPO_NAME="${REPO#*/}"
           REPO_URL="https://github.com/$REPO"
+          if [ "$REPO_NAME" = "${OWNER}.github.io" ]; then
+            PAGES_URL="https://${OWNER}.github.io/"
+          else
+            PAGES_URL="https://${OWNER}.github.io/${REPO_NAME}/"
+          fi
           LAST_UPDATE=$(git log -1 --format=%cI || date -u +%Y-%m-%dT%H:%M:%SZ)
           YEAR=$(date -u -d "$LAST_UPDATE" +%Y 2>/dev/null || date -u +%Y)
 
-          logins=$(curl -s -H "Authorization: Bearer $GH_TOKEN"             "https://api.github.com/repos/$REPO/contributors?per_page=100&anon=false"             | jq -r '.[] | select((.type // "") != "Bot") | select(.login != "ghost") | .login' | sort -fu)
+          logins=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$REPO/contributors?per_page=100&anon=false" \
+            | jq -r '.[] | select((.type // "") != "Bot") | select(.login != "ghost") | .login' | sort -fu)
 
           names=""
           for u in $logins; do
@@ -125,14 +294,43 @@ jobs:
           fi
 
           bibtex="@misc{$REPO_NAME-$YEAR,
-          author = {$authors_bibtex},
-          title = {$REPO_NAME},
-          year = {$YEAR},
-          howpublished = {\\url{$REPO_URL}},
-          note = {Last updated: $LAST_UPDATE}
+            author = {$authors_bibtex},
+            title = {$REPO_NAME},
+            year = {$YEAR},
+            howpublished = {\\url{$REPO_URL}},
+            note = {Last updated: $LAST_UPDATE}
           }"
 
-          printf '%s\n' '' '<hr>' '<h2>License</h2>' '<p>This project is licensed under the <a href="LICENSE">MIT License</a>.</p>' '' '<h2>Suggested Citation</h2>' "<p>$citation_written</p>" '' '<h3>BibTeX</h3>' '<pre><code>' "$bibtex" '</code></pre>' '' '<h3>Repository</h3>' "<p><em>$REPO_NAME</em><br>" "<a href=\"$REPO_URL\">$REPO_URL</a><br>" "<strong>Last updated:</strong> $LAST_UPDATE</p>" >> index.html
+          EXTRAS=$(cat <<HTML
+          <section class="extras">
+            <hr>
+            <h2>License</h2>
+            <p>This project is licensed under the <a href="LICENSE">MIT License</a>.</p>
+
+            <h2>Suggested Citation</h2>
+            <p>$citation_written</p>
+
+            <h3>BibTeX</h3>
+            <pre><code>$bibtex</code></pre>
+
+            <h3>Repository</h3>
+            <p><em>$REPO_NAME</em><br>
+            <a href="$REPO_URL">$REPO_URL</a><br>
+            <a href="$PAGES_URL">$PAGES_URL</a><br>
+            <strong>Last updated:</strong> $LAST_UPDATE</p>
+          </section>
+          HTML
+          )
+
+          awk -v block="$EXTRAS" 'BEGIN{IGNORECASE=1}
+            {
+              line=$0
+              if (!done && match(tolower(line), /<\/div>\s*<\/main>\s*<\/div>\s*<\/body>/)) {
+                sub(/<\/div>\s*<\/main>\s*<\/div>\s*<\/body>/, block"</div></main></div></body>")
+                done=1
+              }
+              print
+            }' index.html > index.html.tmp && mv index.html.tmp index.html
 
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3
@@ -148,5 +346,10 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Show deployed Pages URL in summary
+        run: |
+          echo "### Deployed Pages URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ steps.deployment.outputs.page_url }}" >> "$GITHUB_STEP_SUMMARY"
 
 
