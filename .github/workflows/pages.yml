@@ -116,7 +116,7 @@ jobs:
           .sidebar nav.toc ul ul ul ul { padding-left:14px; margin-left:6px; }
 
           .content { width:100%; }
-          .container { width:100%; max-width: 1000px; margin:0 auto; padding:48px; }
+          .container { width:100%; max-width: 900px; margin:0 auto; padding:48px; }
 
           .extras { margin-top: 48px; }
           .extras h2, .extras h3 { margin-top: 1.2em; }
