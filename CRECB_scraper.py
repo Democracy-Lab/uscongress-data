@@ -8,6 +8,7 @@ import re
 from typing import Any, Dict, List, Set
 from datetime import datetime, date
 from concurrent.futures import ThreadPoolExecutor
+
 import requests
 
 # ─── Configuration ────────────────────────────────────────────────────────────
@@ -15,14 +16,14 @@ BASE_API_URL = "https://api.govinfo.gov"
 PAGE_SIZE    = 1000
 RETRY_DELAY  = 15    # seconds on HTTP 429
 MAX_RETRIES  = 3
-CHUNK_YEARS  = 25    # split published scan into 25-year chunks to ensure all packages are found
+CHUNK_YEARS  = 25    # split published scan into 25‑year chunks
 
-# ─── Thread-safety for rotating API keys ──────────────────────────────────────
+# ─── Thread‑safety for rotating API keys ──────────────────────────────────────
 _key_lock   = threading.Lock()
 _key_index  = 0
 API_KEYS: List[str] = []
 
-# ─── Per-year state containers ────────────────────────────────────────────────
+# ─── Per‑year state containers ────────────────────────────────────────────────
 year_states      : Dict[str, Dict[str, Any]] = {}  # year -> { pdf_ctr, xml_ctr, html_dir, xml_dir, lock }
 year_states_lock = threading.Lock()
 
@@ -35,11 +36,11 @@ logging.basicConfig(
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 def sanitize(text: str) -> str:
-    """Remove filesystem-unfriendly characters."""
+    """Remove filesystem‑unfriendly characters."""
     return re.sub(r'[\\/*?:"<>|]', "", text)
 
 def get_api_key() -> str:
-    """Round-robin selection of API key."""
+    """Round‑robin selection of API key."""
     global _key_index
     with _key_lock:
         key = API_KEYS[_key_index]
@@ -51,20 +52,20 @@ def rate_limit():
     time.sleep(0.1)
 
 def fetch_json(url: str, params: Dict[str,Any]) -> Dict[str,Any]:
-    """GET with retries and basic rate-limiting."""
+    """GET with retries and basic rate‑limiting."""
     for _ in range(MAX_RETRIES):
         rate_limit()
         resp = requests.get(url, params=params)
         if resp.status_code == 429:
             wait = int(resp.headers.get("Retry-After", RETRY_DELAY))
-            logging.warning(f"429 rate-limited, sleeping {wait}s…")
+            logging.warning(f"429 rate‑limited, sleeping {wait}s…")
             time.sleep(wait)
             continue
         resp.raise_for_status()
         return resp.json()
     resp.raise_for_status()
 
-# ─── 1) Discover all CRECB packages in 25-year chunks ─────────────────────────
+# ─── 1) Discover all CRECB packages in 25‑year chunks ─────────────────────────
 def get_all_packages(start_year: int) -> List[str]:
     pkgs_set: Set[str] = set()
     today = datetime.utcnow().date()
@@ -136,7 +137,7 @@ def get_summary(pkg: str, gran: str) -> Dict[str,Any]:
     resp.raise_for_status()
     return {}
 
-# ─── Worker: download PDF & MODS into per-year buckets ────────────────────────
+# ─── Worker: download PDF & MODS into per‑year buckets ────────────────────────
 def worker(pkg_gran: Any):
     pkg, gran = pkg_gran
     summ = get_summary(pkg, gran)
@@ -190,7 +191,7 @@ def worker(pkg_gran: Any):
             logging.warning(f"No MODS for {base} (status {resp.status_code})")
 
 # ─── Orchestration ────────────────────────────────────────────────────────────
-def crawl_bound(workers: int, start_year: int, parallel: bool):
+def crawl_bound(workers: int, start_year: int):
     packages = get_all_packages(start_year)
 
     def pkg_sort_key(pkg: str):
@@ -204,24 +205,14 @@ def crawl_bound(workers: int, start_year: int, parallel: bool):
 
     packages.sort(key=pkg_sort_key)
 
-    logging.info(f"Parallel mode: {'ON' if parallel else 'OFF'} (workers={workers if parallel else 1})")
-
-    if parallel and workers > 1:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            for pkg in packages:
-                logging.info(f"Enumerating granules for package '{pkg}'…")
-                ids = get_granules(pkg)
-                logging.info(f"  → found {len(ids)} granules in '{pkg}', dispatching downloads…")
-                pool.map(worker, ((pkg, gran) for gran in ids))
-    else:
+    with ThreadPoolExecutor(max_workers=workers) as pool:
         for pkg in packages:
             logging.info(f"Enumerating granules for package '{pkg}'…")
             ids = get_granules(pkg)
-            logging.info(f"  → found {len(ids)} granules in '{pkg}', downloading sequentially…")
-            for gran in ids:
-                worker((pkg, gran))
+            logging.info(f"  → found {len(ids)} granules in '{pkg}', dispatching downloads…")
+            pool.map(worker, ((pkg, gran) for gran in ids))
 
-    logging.info("CRECB scrape complete!")
+    logging.info("✅ Scrape complete!")
 
 # ─── CLI Entry Point ──────────────────────────────────────────────────────────
 if __name__ == "__main__":
@@ -230,9 +221,6 @@ if __name__ == "__main__":
     p.add_argument("--api-keys", required=True, help="Comma-separated GovInfo API keys")
     p.add_argument("--workers",  type=int, default=4, help="Parallel threads")
     p.add_argument("--start-year", type=int, default=1873, help="Start year for scraping (default: 1873)")
-    p.add_argument("--parallel", action="store_true",
-               help="Run downloads in parallel (default: off)")
-
     args = p.parse_args()
 
     API_KEYS = [k.strip() for k in args.api_keys.split(",") if k.strip()]
@@ -245,4 +233,4 @@ if __name__ == "__main__":
     START_YEAR = args.start_year
     os.makedirs(OUTPUT, exist_ok=True)
 
-    crawl_bound(WORKERS, START_YEAR, args.parallel)
+    crawl_bound(WORKERS, START_YEAR)
