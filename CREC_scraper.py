@@ -499,6 +499,15 @@ def main(output_folder: str,
 
 # ─────────────────────── CLI ────────────────────────────────────
 if __name__ == '__main__':
+    # Python 3.9+: BooleanOptionalAction gives --parallel / --no-parallel
+    try:
+        bool_action = argparse.BooleanOptionalAction
+    except AttributeError:
+        # Fallback for older Pythons: use a custom flag parser
+        class _BoolAction(argparse.Action):
+            def __call__(self, parser, namespace, values, option_string=None):
+                setattr(namespace, self.dest, option_string.startswith('--parallel'))
+        bool_action = _BoolAction
 
     p = argparse.ArgumentParser(description="CREC end-to-end scraper/parser (single script, optional parallelism)")
     p.add_argument('output_folder', help="Top-level output directory")
@@ -508,8 +517,7 @@ if __name__ == '__main__':
     p.add_argument('--per-key-hourly-limit', type=int,
                    help="Optional per-key hourly limit to set a global throttle (e.g., 1000)")
     p.add_argument('--workers', type=int, default=8, help="Worker threads when --parallel is on")
-    p.add_argument("--parallel", action="store_true",
-               help="Run downloads in parallel (default: off)")
+    p.add_argument('--parallel', action=bool_action, default=True, help="Enable/disable parallel fetch (default: enabled)")
     args = p.parse_args()
 
     keys = [k.strip() for k in args.api_keys.split(',') if k.strip()]
